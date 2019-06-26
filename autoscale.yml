@@ -1,0 +1,151 @@
+---
+- hosts: local
+  connection: local
+  gather_facts: false
+  vars_prompt:
+  #user enters the name of the ami image to make an autoscaling group from
+   - name: image
+     prompt: "enter the AMI image id"
+     private: no
+ 
+  #user enters the name that will be used to name everything else in the architecture
+   - name: redhat
+     prompt: "enter the desired name for infastructure"
+     private: no
+
+  vars:
+   loadb: "{{redhat}}-lb"
+   auto_sc:  "{{redhat}}_asg"
+   lc: "{{redhat}}_lc"
+
+  vars_files:
+    #contains the variables ami_access and ami_secret  
+    - amiKeys.yml
+    #contains the variables keypair, group, subnetID and regi
+    - regionInfo.yml
+
+  tasks:
+   #load balancer
+   - ec2_elb_lb:
+      aws_access_key: '{{ ami_access }}'
+      aws_secret_key: '{{ ami_secret }}'
+      security_group_ids: '{{group}}'
+      name: "{{loadb}}"
+      region: "{{regi}}"
+      zones:
+       - us-east-2a
+       - us-east-2b
+       - us-east-2c
+      state: present
+      listeners:
+       - protocol: http
+         load_balancer_port: 80
+         instance_port: 80
+
+   #info on the ec2_lc module
+   
+
+   #launch config
+   - name: launch cnfig
+     ec2_lc:
+       aws_access_key: '{{ ami_access }}'
+       aws_secret_key: '{{ ami_secret }}'
+       region:  "{{regi}}"
+       name: '{{lc}}'
+       image_id: '{{ image }}'
+       key_name: "{{ keypair }}"
+       security_groups: '{{ group }}'
+       instance_type: t2.micro
+       volumes:
+        - device_name: /dev/sda1
+          volume_size: 100
+          device_type: io1
+          iops: 3000
+          delete_on_termination: true  
+    
+   #auto scaling group
+   #AutoScaling for ELB HealthCheck
+   - ec2_asg:
+      aws_access_key: '{{ ami_access }}'
+      aws_secret_key: '{{ ami_secret }}'
+      region:  "{{ regi }}"
+      name: '{{ auto_sc }}'
+      load_balancers: '{{ loadb }}'
+      availability_zones: 'us-east-2a'
+      launch_config_name: '{{ lc }}'
+      health_check_period: 60
+      health_check_type: ELB
+      min_size: 2
+      max_size: 4
+      desired_capacity: 2
+      replace_all_instances: yes
+      vpc_zone_identifier: '{{ subnetID }}'
+      wait_for_instances: true 
+
+   #AutoScaling Based on EC2 HealthCheck
+#   - ec2_asg:
+#      aws_access_key: '{{ ami_access }}'
+#      aws_secret_key: '{{ ami_secret }}'
+#      region:  "{{ regi }}"
+#      name: '{{ auto_sc }}'
+#      load_balancers: '{{ loadb }}'
+#      health_check_period: 60
+#      health_check_type: EC2
+#      availability_zones: 'us-east-2a'
+#      launch_config_name: '{{ lc }}'
+#      min_size: 2
+#      max_size: 4
+#      desired_capacity: 2
+#      replace_all_instances: yes
+#      vpc_zone_identifier: '{{ subnetID }}'
+#      wait_for_instances: true
+
+
+    #adds or removes instances
+   - ec2_scaling_policy:
+      aws_access_key: '{{ ami_access }}'
+      aws_secret_key: '{{ ami_secret }}'
+      region: "{{regi}}"
+      state: present
+      name: "{{item.pol_name}}"
+      asg_name: '{{ auto_sc }}' 
+      adjustment_type: "ChangeInCapacity"
+      scaling_adjustment: "{{item.changes}}"
+      min_adjustment_step: 1
+      cooldown: 300
+     register: policies 
+     with_items:
+       - pol_name: "cpuUP_{{auto_sc}}_policy"
+         changes: +1
+       - pol_name: "cpuDown_{{auto_sc}}_policy"
+         changes: -1
+   
+    # cloud watch alarms
+   - ec2_metric_alarm:
+      aws_access_key: '{{ ami_access }}'
+      aws_secret_key: '{{ ami_secret }}'
+      state: present
+      region: "{{regi}}"
+      name: "{{item.names}}"
+      metric: "CPUUtilization"
+      namespace: "AWS/EC2"
+      statistic: Average
+      comparison: "{{item.compare}}"
+      threshold: "{{item.limits}}"
+      period: 300
+      evaluation_periods: 1
+      unit: "Percent"
+      description: "{{item.desc}}"
+      dimensions: {'AutoScalingGroupName':'{{auto_sc}}'}
+      alarm_actions: "{{item.pol}}"
+     with_items:
+      - names: "cpuUP_{{auto_sc}}"
+        compare: ">="
+        limits: "90.0"
+        desc: "This will alarm when the average cpu usage of the ASG is greater than 20% for 1 minute"
+        pol: "{{policies.results[0]['arn']}}"
+      - names: "cpuDown_{{auto_sc}}"
+        compare: "<="
+        limits: "10.0"
+        desc: "This will alarm when the average cpu usage of the ASG is less than 10% for 1 minute"
+        pol: "{{policies.results[1]['arn']}}"

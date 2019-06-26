@@ -1,0 +1,9 @@
+---
+# keypair Name
+keypair: "centos"
+# security group ID
+group: "sg-077bae794d0b9d451"
+#Subnets using for 
+subnetID: "subnet-af5060c7"
+#the region of the subnet 
+regi: "us-east-2"
