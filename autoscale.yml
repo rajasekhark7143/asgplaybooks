@@ -73,8 +73,8 @@
       load_balancers: '{{ loadb }}'
       availability_zones: 'us-east-2a'
       launch_config_name: '{{ lc }}'
-      health_check_period: 60
-      health_check_type: ELB
+#      health_check_period: 60
+#      health_check_type: ELB
       min_size: 2
       max_size: 4
       desired_capacity: 2
@@ -142,7 +142,7 @@
       - names: "cpuUP_{{auto_sc}}"
         compare: ">="
         limits: "90.0"
-        desc: "This will alarm when the average cpu usage of the ASG is greater than 20% for 1 minute"
+        desc: "This will alarm when the average cpu usage of the ASG is greater than 90% for 5 minute"
         pol: "{{policies.results[0]['arn']}}"
       - names: "cpuDown_{{auto_sc}}"
         compare: "<="
